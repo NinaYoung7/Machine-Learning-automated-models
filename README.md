@@ -38,13 +38,20 @@ C is the proportion of the predictions on the testing set that are incorrectly c
 Total Models: 
 
 Multinomial logistic regression (Package: nnet; Function: multinom)
+
 K-Nearest Neighbors (Package: class; Function: knn)
+
 Classification Tree (Package: rpart; Function: rpart)
+
 Random Forest (Package: randomForest; Function: randomForest)
+
 Ridge, Lasso, or Elastic Net Regression (Package: glmnet; Function: glmnet with alpha = 0 for Ridge, alpha = 1 for Lasso, and values of alpha between 0 and 1 for Elastic Net)
+
 Support Vector Machines (Package: e1071; Function: svm)
+
 Generalized Boosted Regression Models (Package: gbm; Function: gbm or Package: xgboost; Function: xgboost)
-Neural Networks (Package: nnet; Function: nnet or Package: h20; Function: h2o.deeplearning)
+
+
 
 
 
