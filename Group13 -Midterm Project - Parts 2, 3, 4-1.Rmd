@@ -1,0 +1,217 @@
+---
+title: "Data Science Consulting:  Midterm Team Project Parts 2,3,4"
+author: "Kaidi Meng, Xinyi Shao, Ning Yang"
+date: "Nov 17, 2022 "
+output: html_document
+---
+
+```{r setup, include=FALSE}
+set.seed(35)
+library(knitr)
+opts_chunk$set(echo = FALSE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55))
+```
+
+```{r libraries}
+library(data.table)
+library(DT)
+library(randomForest)
+```
+
+```{r source_files}
+
+```
+
+```{r functions}
+# Round Numbers
+round.numerics <- function(x, digits){
+  if(is.numeric(x)){
+    x <- round(x = x, digits = digits)
+  }
+  return(x)
+}
+
+# Sampling
+sampling <- function(x, value) {
+  x[sample(1:nrow(x), size = value, replace = FALSE), ]
+}
+
+# Iterations 
+iteration.func <- function(model.func) {
+  tab <- NULL
+  for (i in 1:3){
+    for (j in 1:iterations) {
+      size <- n.values[i]
+      sample.name <- sprintf("%s_%d_%d", "dat", size, j)
+      results <- model.func(dat = get(sample.name), size = size)
+      tab <- as.data.table(rbind(tab, results))
+    }
+  }
+  tab$Data <- sample.list
+  return(tab)
+}
+
+rf250_accrancy<-function(dat,size){
+   model <- randomForest(formula = as.factor(label) ~., data = dat, ntree = 250)
+   pred<- predict(model, newdata = test)
+   #confusion matrix
+   cm <- table(pred,as.factor(test$label))
+   numByClass<-test[,.N,by=label]
+   accrancy<-diag(cm)/1000
+   #Each product has 1000 rows in test data
+   df.accrancy <- as.data.frame(t(accrancy))
+   df.accrancy
+   re <- data.frame(Model = "Random Forest 250",
+                    `Sample Size` = as.character(size), 
+                    Data =deparse(substitute(dat)))
+   result<-cbind(re,df.accrancy)
+   pred.rf250 <<- cbind(pred.rf250, as.character(pred))
+   return(result)
+}
+```
+
+```{r constants}
+n.values <- c(500, 1000, 2000)
+iterations <- 3
+
+sample.list <- list()
+for (i in 1:3) {
+    for (j in 1:iterations) {
+    size <- n.values[i]
+    sample.name <- sprintf("%s_%d_%d", "dat", size, j)
+    sample.list[length(sample.list) + 1] <- sample.name
+  }
+}
+```
+
+```{r load_data}
+train <- fread(input = "MNIST-fashion training set-49.csv", verbose = F)
+test <- fread(input = "MNIST-fashion testing set-49.csv", verbose = F)
+
+```
+
+```{r sample_data}
+dat_500_1 <- sampling(train, n.values[1])
+dat_500_2 <- sampling(train, n.values[1])
+dat_500_3 <- sampling(train, n.values[1])
+
+dat_1000_1 <- sampling(train, n.values[2])
+dat_1000_2 <- sampling(train, n.values[2])
+dat_1000_3 <- sampling(train, n.values[2])
+
+dat_2000_1 <- sampling(train, n.values[3])
+dat_2000_2 <- sampling(train, n.values[3])
+dat_2000_3 <- sampling(train, n.values[3])
+```
+
+# Project Components {.tabset}
+
+## Part 2:  Additional Analyses {.tabset}
+
+This part of the report will be directed externally to the managers of the engineering teams in the client's company.  Plan your communication accordingly.
+
+Please answer each of the following questions:
+
+### Q1
+
+For your preferred model, what is the level of accuracy (percentage of testing cases correctly classified) in each type of product listed in the label variable?
+
+The random forest tree model with 250 trees is the one we prefer and it has the best performance among the 10 models we constructed.The level of accuracy by product in each sample is as below:
+
+```{r p2q1}
+# Create a table to store prediction results
+pred.rf250 <- NULL
+
+# Create a table to store summarized output
+rf.tab250 <- NULL
+
+# Iterate model
+rf.tab250 <- iteration.func(rf250_accrancy)
+
+# Save results
+saveRDS(rf.tab250, "rf_250")
+datatable(readRDS("rf_250"),options = list(pageLength = 5))
+ 
+```
+
+
+### Q2
+
+Do you think the formula for the Points provides the best trade-off between sample size, running time, and accuracy?  How would you revise it based on the experiments you ran?
+
+Points = 0.15 * A + 0.1 * B + 0.75 * C
+
+I think the weighting of the parameters depends on our choice of 10 models. I think our current analysis is consistent with that weighting, and we think that the trade-off between the three is reasonable.
+Since the current error rate is weighted heavily, the goal of reducing the total score is to find models that are as accurate as possible in prediction, regardless of complexity. Because of the small proportion of running time, we allow complex models in exchange for model accuracy. So our group tries to adjust different parameters in the model to reduce the errors.
+
+
+### Q3
+
+Our client would like to do this work on a larger catalog of images.  For now, we will continue to think of this in terms of a collection of 10 labeled images.  What kind of processing would be required to scale this model to 1000 such collections?  Would this larger problem change your priorities when it comes to sample size, running time, and accuracy?
+
+```{r p2q3, eval=FALSE}
+#collections <- c(dat1,dat2,...dat100)
+lapply(collections,rf.fit250)
+```
+
+We need to create a list for the 1000 collections, then use 'lapply'`function to apply the same model function to those collections.
+
+If scale this model to 1000 such collection, the complexity of the data is enhanced and the gap between different models is large. For example, SVM can accurately predict multidimensional data in a very short time. Our goal is to predict as accurately as possible with less data, in as fast a time as possible, so we should make models like SVM and neural network show as much merit as possible.
+
+If we adjust the weight of running time to 0.25, adjust the weight of error rate to 0.5, and adjust the sample size ratio to 0.25 as well, we can sacrifice a little accuracy to find models that run relatively fast. It is also possible to find models that run faster for larger samples. Our current best model, random forest, comes at the cost of more computation time and a larger sample size. Changing the priority would be more suitable for a larger catalog of images.
+
+
+## Part 3:  Opportunities {.tabset}
+
+This part of the report will be directed externally to your client's senior leadership.  Your work will help to determine the future direction of the project and the company's contract with this client.  Plan your communication accordingly.
+
+Please write a short answer (e.g. one paragraph) to answer each of the following questions:
+
+### Q1
+
+What are some opportunities to learn valuable information and inform strategic decisions? List a number of questions that you might explore.
+
+1) How to incorporate the new modeling approach with the current infrastructure?
+
+2) How can the model be better automated?
+
+
+### Q2
+
+What kind of products could be built that would make use of the classification models you constructed?  How would they help the client, and how would they help the client's customers?
+
+An application that helps people to find the products they are interested in can be built using the classification models. With the image recognition feature, the application can identify the products in a picture and return similar products to the users, hence facilitating their shopping experience. The product can help the client because this application can be incorporated with the social media platform and attract more users, increase the platform’s traffic, and expand the business opportunities to partner with e-commerce platforms. 
+
+
+### Q3
+
+How would you approach other decisionmakers within the organization to assess their priorities and help them better utilize the available information?
+
+We would first approach the client’s point of contact to get to know the other stakeholders of the project, including their contact information and possible expectations. Then we would schedule meetings with the decision-makers to learn more about their priorities, presents the project’s progress, and help them to utilize the application better. We would also answer their questions and take their opinions into account for possible improvements to the project.
+
+
+## Part 4:  Internal Wrap-Up {.tabset}
+
+This part of the report will be directed internally to your consulting company's managers and partners.  Plan your communication accordingly.
+
+How would you summarize the nature of this engagement to your consulting company?  Your engagement manager and the managing partners of the firm would be interested in how to improve their own approach to designing similar contracts in the future.  Please answer the following questions.
+
+### Q1
+
+What level of staffing would be appropriate for a similar engagement in the future?  Tell us how many consultants, the overall weeks, and the number of hours that would be required.
+
+To produce similar or larger projects in the future, the staffing level should include two consultants, five to six data analysts, one internal manager, and one decision-maker. Designing a similar contract and striving for better results will likely take about 4 to 5 weeks, and in a total of 180 hours of meetings, discussions, code-producing, troubleshooting, revising, etc.
+
+
+### Q2
+
+What is the best way to pitch this kind of work to other prospective clients?  Should we focus on developing the models, training the clients in machine learning, reporting, or perhaps something else? learning, reporting, or perhaps something else?
+
+An introduction to rudimental machine learning usage would be a good starting point. By stating the great potential of the machine learning process and its value to clients will let them become interested in this technology. Then, we can have a chance to showcase the results from this project and let the clients be aware of how many things a computer can do. The most important result is the scoreboard generated from Part 1, which is the indicator of how various models perform in predicting the labels. We should reinforce further development of models and methods. At the same time, we should also demonstrate visions of using machine learning techniques for other fields to the clients.
+
+
+### Q3
+
+What kind of training should we provide to our consultants to be able to do the kind of work you performed?
+
+First, our consultants need to understand the ultimate goal so that we are moving toward the same destination. And we believe the consultants’ job is to ensure we are on the right path and consider both clients’ needs and team members’ abilities. So the training would also include basic knowledge of coding and machine learning, as well as how to run code to generate needed information.
+

@@ -1,0 +1,665 @@
+---
+title: "Data Science Consulting:  Midterm Team Project -- Part 1"
+author: "Kaidi Meng, Xinyi Shao, Ning Yang"
+date: "Nov 17, 2022 "
+output: html_document
+---
+
+```{r setup, include=FALSE}
+set.seed(72)
+
+knitr::opts_chunk$set(echo = TRUE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55))
+```
+
+```{r libraries,echo = FALSE}
+library(data.table)
+library(DT)
+
+library(nnet)
+library(randomForest)
+library(class)
+library(e1071)
+library(glmnet)
+library(rpart)
+```
+
+```{r source_files}
+
+```
+
+```{r functions,eval = TRUE,echo = FALSE, warning=FALSE, message=FALSE}
+# Round Numbers
+round.numerics <- function(x, digits){
+  if(is.numeric(x)){
+    x <- round(x = x, digits = digits)
+  }
+  return(x)
+}
+
+# Sampling
+sampling <- function(x, value) {
+  x[sample(1:nrow(x), size = value, replace = FALSE), ]
+}
+
+# Iterations 
+iteration.func <- function(model.func) {
+  tab <- NULL
+  for (i in 1:3){
+    for (j in 1:iterations) {
+      size <- n.values[i]
+      sample.name <- sprintf("%s_%d_%d", "dat", size, j)
+      results <- model.func(dat = get(sample.name), size = size)
+      tab <- as.data.table(rbind(tab, results))
+    }
+  }
+  tab$Data <- sample.list
+  return(tab)
+}
+
+
+# Scoring Summary Function
+scoring.summary <- function(dat) {
+  tab <- NULL
+  for (i in 1:iterations) {
+    size <- n.values[i]
+    tab <- rbind(tab, unique(dat[Sample.Size == size, .(Sample.Size, A = round.numerics(mean(A),4), B = round.numerics(mean(B),4), C = round.numerics(mean(C),4), Points = round.numerics(mean(Points),4)), by = Model]))
+  }
+  setorderv(x = tab, cols = "Model", order = 1)
+  return(tab)
+}
+```
+
+```{r constants,echo = FALSE, warning=FALSE, message=FALSE}
+n.values <- c(500, 1000, 2000)
+iterations <- 3
+weight.A = 0.15 
+weight.B = 0.1
+weight.C = 0.75
+
+sample.list <- list()
+for (i in 1:3) {
+    for (j in 1:iterations) {
+    size <- n.values[i]
+    sample.name <- sprintf("%s_%d_%d", "dat", size, j)
+    sample.list[length(sample.list) + 1] <- sample.name
+  }
+}
+```
+
+```{r load_data,echo = FALSE, warning=FALSE, message=FALSE}
+train <- fread(input = "MNIST-fashion training set-49.csv", verbose = F)
+test <- fread(input = "MNIST-fashion testing set-49.csv", verbose = F)
+```
+
+```{r clean_data}
+
+```
+
+```{r generate_samples,echo = FALSE, warning=FALSE, message=FALSE}
+dat_500_1 <- sampling(train, 500)
+dat_500_2 <- sampling(train, 500)
+dat_500_3 <- sampling(train, 500)
+
+dat_1000_1 <- sampling(train, 1000)
+dat_1000_2 <- sampling(train, 1000)
+dat_1000_3 <- sampling(train, 1000)
+
+dat_2000_1 <- sampling(train, 2000)
+dat_2000_2 <- sampling(train, 2000)
+dat_2000_3 <- sampling(train, 2000)
+
+```
+
+## Introduction {.tabset}
+
+For this project, we utilized seven different machine-learning techniques and selected ten models. We trained 10 models on 9 random samples of 3 different sample sizes from overall training data and compared running times, and the sample sizes. We try to find a classification method that minimizes the value of Points. Finally, we used these models to make predictions on the test data and believe that these models can accurately classify as many items in the test set as possible with as little data as possible and at a faster run rate.
+
+
+### Model 1: Multinomial logistic regression
+
+```{r code_model1_development, results = 'hide'}
+##### Multinomial logistic regression
+
+# Model 1
+mlr.fit <- function(dat, size) {
+  t1 <- Sys.time()
+  
+  model <- multinom(formula = as.factor(label) ~., data = dat)
+  pred <- predict(model, newdata = test, type = "class")
+  
+  t2 <- Sys.time()
+  
+  prop.rows <- round.numerics((size/60000),4)
+  running.time <- round.numerics((min(1, (t2 - t1)/60)),4)
+  error.preds <- round.numerics((sum(pred != test$label)/nrow(test)),4)
+  
+  result.tab <- data.frame(Model = "Multinomial Logistic Regression",
+                    `Sample Size` = as.character(size), 
+                    Data = deparse(substitute(dat)), 
+                    A = prop.rows,
+                    B = running.time,
+                    C = error.preds)
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.mlr <<- cbind(pred.mlr, as.character(pred))
+  
+  return(result.tab)
+}
+
+# Create a table to store prediction results
+pred.mlr <- NULL
+
+# Create a table to store summarized output
+mlr.tab <- NULL
+
+# Iterate model
+mlr.tab <- iteration.func(mlr.fit)
+
+# Save results
+saveRDS(mlr.tab, "mlr")
+```
+
+```{r load_model1}
+datatable(readRDS("mlr"))
+```
+The multinomial logistic regression method was chosen because it is typically used to predict categorical placement in or the probability of membership in a category on the basis of multiple independent variables. It uses maximum likelihood estimation to evaluate the probability of categorical membership. This method is easy to apply and very efficient to train, but it can cause overfitting due to less observations.
+
+Based on the result table, we can see a decreasing pattern of points as the training dataset contains more rows.
+
+
+### Model 2: KNN, k = 5
+
+```{r code_model2_development}
+##### K-nearest neighbors, k=5
+
+# Model 2
+knn5.fit <- function(dat, size){
+  cl <- dat[,label]
+  t1 <- Sys.time()
+
+  prop.rows <- size/60000
+  pred <- knn(train = dat[,-1], test = test[,-1], cl = cl, k = 5)
+         
+  t2 <- Sys.time()
+         
+  running.time <- min(1, (t2 - t1)/60)
+  error.preds <- (sum(pred != test$label)/nrow(test))
+         
+  result.tab <- data.frame(Model = "kNN_5",
+                    `Sample Size` = as.character(size),
+                    Data = deparse(substitute(dat)), 
+                    A = round.numerics(prop.rows,4),
+                    B = round.numerics(running.time,4),
+                    C = round.numerics(error.preds,4))
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.knn5 <<- cbind(pred.knn5, as.character(pred))
+  
+  return(result.tab)
+}
+
+# Create a table to store prediction results
+pred.knn5 <- NULL
+
+# Create a table to store summarized output
+knn5.tab <- NULL
+
+# Iterate model
+knn5.tab <- iteration.func(knn5.fit)
+
+# Save results
+saveRDS(knn5.tab, "knn5")
+```
+
+```{r load_model2}
+datatable(readRDS("knn5"))
+```
+The k-nearest neighbors model classifies data points based on the points that are similar to them, and we chose this model to predict the unclassified points. We chose three optimal numbers of neighbors, and tested k=10 first. After that, we tested k=5 and k=15 to compare the scorings and keep the models with the lowest two scores.
+
+
+### Model 3: KNN, k = 10
+
+```{r code_model3_development}
+##### K-nearest neighbors, k=10
+
+# Model 3
+knn10.fit <- function(dat, size){
+  cl <- dat[,label]
+  t1 <- Sys.time()
+
+  prop.rows <- size/60000
+  pred <- knn(train = dat[,-1], test = test[,-1], cl = cl, k = 10)
+         
+  t2 <- Sys.time()
+         
+  running.time <- min(1, (t2 - t1)/60)
+  error.preds <- (sum(pred != test$label)/nrow(test))
+         
+  result.tab <- data.frame(Model = "kNN_10",
+                    `Sample Size` = as.character(size),
+                    Data = deparse(substitute(dat)), 
+                    A = round.numerics(prop.rows,4),
+                    B = round.numerics(running.time,4),
+                    C = round.numerics(error.preds,4))
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.knn10 <<- cbind(pred.knn10, as.character(pred))
+  
+  return(result.tab)
+}
+
+# Create a table to store prediction results
+pred.knn10 <- NULL
+
+# Create a table to store summarized output
+knn10.tab <- NULL
+
+# Iterate model
+knn10.tab <- iteration.func(knn10.fit)
+
+# Save results
+saveRDS(knn10.tab, "knn10")
+```
+
+```{r load_model3}
+datatable(readRDS("knn10"))
+```
+For the k-nearest neighbors model, we tested k=10 for the optimal number of neighbors, and compared its scoring with k=5 and k=15. As k=15 has the highest scoring, we dropped the model and kept the Knn models with k=10 and k=5.
+
+
+### Model 4: Classification Tree 
+
+```{r code_model4_development}
+##### Classification Tree
+
+# Model 4
+ct.fit <-  function(dat, size) {
+  t1 <- Sys.time()
+  
+  model <- rpart(formula = as.factor(label)~.,data = dat)
+  pred <- predict(model, newdata = test, type="class")
+  
+  t2 <- Sys.time()
+  
+  prop.rows <- size/60000
+  running.time <- min(1, (t2 - t1)/60)
+  error.preds <- (sum(pred != test$label)/nrow(test))
+  
+  result.tab <- data.frame(Model = "Classification Trees",
+                    `Sample Size` = as.character(size), 
+                    Data = deparse(substitute(dat)), 
+                    A = round.numerics(prop.rows,4),
+                    B = round.numerics(running.time,4),
+                    C = round.numerics(error.preds,4))
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.ct <<- cbind(pred.ct, as.character(pred))
+  
+  return(result.tab)
+}
+
+# Create a table to store prediction results
+pred.ct <- NULL
+
+# Create a table to store summarized output
+ct.tab <- NULL
+
+# Iterate model
+ct.tab <- iteration.func(ct.fit)
+
+# Save results
+saveRDS(ct.tab, "ct")
+```
+
+```{r load_model4}
+datatable(readRDS("ct"))
+```
+The classification tree model selects a single variable and divides the regions into branches. This method provides a straightforward prediction result, but it relies on a single variable, which can result in over-fitting and prediction errors.
+
+
+### Model 5: Random Forest, ntree = 500
+
+```{r code_model5_development}
+##### Random Forest, ntree = 500
+
+# Model 5
+rf.fit500 <-  function(dat, size, ntree = 500) {
+  t1 <- Sys.time()
+  
+  model <- randomForest(formula = as.factor(label) ~., data = dat, ntree = ntree)
+  pred <- predict(model, newdata = test)
+  
+  t2 <- Sys.time()
+  
+  prop.rows <- round.numerics((size/60000),4)
+  running.time <- round.numerics((min(1, (t2 - t1)/60)),4)
+  error.preds <- round.numerics((sum(pred != test$label)/nrow(test)),4)
+  
+  result.tab <- data.frame(Model = "Random Forest 500",
+                    `Sample Size` = as.character(size), 
+                    Data = deparse(substitute(dat)), 
+                    A = prop.rows,
+                    B = running.time,
+                    C = error.preds)
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.rf500 <<- cbind(pred.rf500, as.character(pred))
+  
+  return(result.tab)
+}
+
+# Create a table to store prediction results
+pred.rf500 <- NULL
+
+# Create a table to store summarized output
+rf.tab500 <- NULL
+
+# Iterate model
+rf.tab500 <- iteration.func(rf.fit500)
+
+# Save results
+saveRDS(rf.tab500, "rf_500")
+```
+
+```{r load_model5}
+datatable(readRDS("rf_500"))
+```
+The reason we chose the random forest model is that it offers a large number of relatively uncorrelated models (trees) operating as a committee that will outperform any of the individual constituent models, which means that the trees protect each other from their individual errors. The random forest is made up of many different individual decision trees that work as an ensemble. This is a benefit, but on the other side, as the training data grows, the model may get more complex, and fitting the model takes longer.
+
+First we tried ntree = 500 to assess the model, and as the result shows relatively smaller number of points than other models.
+
+
+### Model 6: Random Forest, ntree = 1000
+
+```{r code_model6_development}
+##### Random Forest, ntree = 1000
+
+# Model 6
+rf.fit1000 <-  function(dat, size, ntree = 1000) {
+  t1 <- Sys.time()
+  
+  model <- randomForest(formula = as.factor(label) ~., data = dat, ntree = ntree)
+  pred <- predict(model, newdata = test)
+  
+  t2 <- Sys.time()
+  
+  prop.rows <- round.numerics((size/60000),4)
+  running.time <- round.numerics((min(1, (t2 - t1)/60)),4)
+  error.preds <- round.numerics((sum(pred != test$label)/nrow(test)),4)
+  
+  result.tab <- data.frame(Model = "Random Forest 1000",
+                    `Sample Size` = as.character(size), 
+                    Data = deparse(substitute(dat)), 
+                    A = prop.rows,
+                    B = running.time,
+                    C = error.preds)
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.rf1000 <<- cbind(pred.rf1000, as.character(pred))
+  
+  return(result.tab)
+}
+# Create a table to store prediction results
+pred.rf1000 <- NULL
+
+# Create a table to store summarized output
+rf.tab1000 <- NULL
+
+# Iterate model
+rf.tab1000 <- iteration.func(rf.fit1000)
+
+# Save results
+saveRDS(rf.tab1000, "rf_1000")
+
+```
+
+```{r load_model6}
+(datatable(readRDS("rf_1000")))
+```
+Next we planed to see if we can get a better number by increasing the ntree to 1000, but as a result the point increases with a larger number of ntree.
+
+
+### Model 7: Random Forest, ntree = 250
+
+```{r code_model7_development}
+##### Random Forest, ntree = 250
+
+# Model 7
+rf.fit250 <-  function(dat, size, ntree = 250) {
+  t1 <- Sys.time()
+  
+  model <- randomForest(formula = as.factor(label) ~., data = dat, ntree = ntree)
+  pred <- predict(model, newdata = test)
+  
+  t2 <- Sys.time()
+  
+  prop.rows <- round.numerics((size/60000),4)
+  running.time <- round.numerics((min(1, (t2 - t1)/60)),4)
+  error.preds <- round.numerics((sum(pred != test$label)/nrow(test)),4)
+  
+  result.tab <- data.frame(Model = "Random Forest 250",
+                    `Sample Size` = as.character(size), 
+                    Data = deparse(substitute(dat)), 
+                    A = prop.rows,
+                    B = running.time,
+                    C = error.preds)
+  result.tab$Points <- round.numerics((0.15*result.tab$A + 0.1*result.tab$B + 0.75*result.tab$C),4)
+  pred.rf250 <<- cbind(pred.rf250, as.character(pred))
+  
+  return(result.tab)
+}
+
+# Create a table to store prediction results
+pred.rf250 <- NULL
+
+# Create a table to store summarized output
+rf.tab250 <- NULL
+
+# Iterate model
+rf.tab250 <- iteration.func(rf.fit250)
+
+# Save results
+saveRDS(rf.tab250, "rf_250")
+
+```
+
+```{r load_model7}
+datatable(readRDS("rf_250"))
+```
+Based on the former results of random forest models (one with ntree of 500 and the other with ntree of 1000), we found that less number of trees will decrease the overall points, possibly because it uses less time to process a small number of trees, that’s why we decided to try ntree = 250 and ensure the accuracy at the same time.
+
+
+### Model 8: Lasso
+
+```{r code_model8_development}
+##### Lasso
+
+# Model 8
+lasso.fit <- function(dat,size){
+
+  x_train <- as.matrix(dat[, 2:dim(dat)[2]])
+  y_train <-as.factor(dat$label)
+  
+  start.time<- Sys.time()
+  lasso.ml <- glmnet(x = x_train, y = y_train, family = "multinomial", alpha = 1)
+  pred <- predict(lasso.ml, newx = as.matrix(test[, -1]), type = "class")
+  end.time <- Sys.time()
+  
+  A<- round.numerics(dat[,.N]/train[,.N],4)
+  B<- round.numerics(min(1,as.numeric(end.time-start.time, units = 'secs')/60),4)
+  C<- round.numerics(mean(pred != test$label),4)
+  
+  points = round.numerics(weight.A* A + weight.B* B + weight.C * C, 4)
+  
+  results <- data.frame(Model = "Lasso",
+                        `Sample Size` = as.character(size),
+                        Data = deparse(substitute(dat)),
+                        A = A, 
+                        B = B,
+                        C = C,
+                        Points = points)
+  pred.lasso <<- cbind(pred.lasso, as.character(pred))
+  return(results)
+}
+
+# Create a table to store prediction results
+pred.lasso <- NULL
+
+# Create a table to store summarized output
+lasso.tab <- NULL
+
+# Iterate model
+lasso.tab <- iteration.func(lasso.fit)
+
+# Save results
+saveRDS(lasso.tab, "lasso")
+```
+
+```{r load_model8}
+datatable(readRDS("lasso"))
+```
+For  lasso  regression, we use glmnet package and set alpha to 1. We tried lasso because of feature selection, which allows the regression coefficients to become exactly zero. This makes the model easier to interpret because only a few significant coefficients are retained.
+
+
+### Model 9: Ridge
+
+```{r code_model9_development}
+##### Ridge
+
+# Model 9
+ridge.fit <- function(dat,size){
+
+  x_train <- as.matrix(dat[, 2:dim(dat)[2]])
+  y_train <-as.factor(dat$label)
+  
+  start.time<- Sys.time()
+  ridge.ml <- glmnet(x = x_train, y = y_train, family = "multinomial", alpha = 0)
+  pred <- predict(ridge.ml, newx = as.matrix(test[, -1]), type = "class")
+  end.time <- Sys.time()
+  
+  A<- round.numerics(dat[,.N]/train[,.N],4)
+  B<- round.numerics(min(1,as.numeric(end.time-start.time, units = 'secs')/60),4)
+  C<- round.numerics(mean(pred != test$label),4)
+  
+  points = round.numerics(weight.A* A + weight.B* B + weight.C * C, 4)
+  
+  results <- data.frame(Model = "Ridge",
+                        `Sample Size` = as.character(size),
+                        Data = deparse(substitute(dat)),
+                        A = A, 
+                        B = B,
+                        C = C,
+                        Points = points)
+  pred.lasso <<- cbind(pred.lasso, as.character(pred))
+  return(results)
+}
+
+# Create a table to store prediction results
+pred.ridge <- NULL
+
+# Create a table to store summarized output
+ridge.tab <- NULL
+
+# Iterate model
+ridge.tab <- iteration.func(ridge.fit)
+
+# Save results
+saveRDS(ridge.tab, "ridge")
+```
+
+```{r load_model9}
+datatable(readRDS("ridge"))
+```
+
+
+We also tried another regularization approach - ridge regression. Like lasso, ridge can also eliminate multicollinearity, but it  decreases model complexity while keeping all variables in the model. This can be achieved by setting alpha to 0.
+
+
+### Model 10: Support Vector Machines
+
+```{r code_model10_development}
+##### Support Vector Machines
+
+# Model 10
+svm.fit <- function(dat,size){
+  start.time <- Sys.time()
+  
+  svm.ml <- svm(as.factor(label)~., data = dat)
+  pred <- predict(svm.ml, newdata = test, type = "class")
+  
+  end.time <- Sys.time()
+  
+  A<- round.numerics(dat[,.N]/train[,.N],4)
+  B<- round.numerics(min(1,as.numeric(end.time-start.time, units = 'secs')/60),4)
+  C<- sum(pred != test$label)/test[,.N]
+  points = round.numerics(weight.A* A + weight.B* B + weight.C * C, 4)
+  
+  results <- data.table(Model = "Support Vector Machines",
+                        `Sample Size` = as.character(size),
+                        Data = deparse(substitute(dat)),
+                        A = A, 
+                        B = B,
+                        C = C,
+                        Points = points)
+  pred.svm <<- cbind(pred.svm, as.character(pred))
+  return(results)                   
+}
+# Create a table to store prediction results
+pred.svm <- NULL
+
+# Create a table to store summarized output
+svm.tab <- NULL
+
+# Iterate model
+svm.tab <- iteration.func(svm.fit)
+
+# Save results
+saveRDS(svm.tab, "svm")
+```
+
+```{r load_model10}
+datatable(readRDS("svm"))
+```
+Finally, we created Support vector machines because it  produces significant accuracy with less computation power. SVM is to find a hyperplane in an N-dimensional space that distinctly classifies the data points. In this case, we segregated 49-dimensional space into classes and put the data points in the correct category.
+
+
+## Preliminary Results
+
+```{r preliminary results}
+preliminary.tab <- NULL
+preliminary.tab <- rbind(mlr.tab, knn5.tab, knn10.tab, ct.tab, rf.tab250, rf.tab500, rf.tab1000, lasso.tab, ridge.tab, svm.tab, use.names=FALSE)
+datatable(preliminary.tab)
+```
+
+
+## Scoreboard
+
+```{r scoreboard}
+scoreboard <- scoring.summary(preliminary.tab)
+datatable(scoreboard)
+```
+
+
+## Discussion
+
+As can be seen from the final scoreboard, the random forest model with 250 trees performs the best, with the smallest weighted scores in terms of sample size, running time, and accuracy. The accuracy of random forests improves as samples increase, but at the cost of running time. We can see that the accuracy of the model with ntree=500 is greater than that of ntree=1000, and the accuracy of the model with ntree=250 is the smallest. This is because although predictive performance tends to increase as the number of trees increases, after a certain point, it starts to hit a point of diminishing returns where the scale of the performance gains us to see from adding more trees gets smaller and smaller. SVM is the second-best model for results because it is effective in high-dimensional cases. The objective of the SVM algorithm is to find a hyperplane in a 49-dimensional space that distinctly classifies the data points in most dataset.
+Also, the increased accuracy of the KNN model results in a longer running time. We constructed KNN models with k values of 5 and 10. The larger the value of k, the higher the accuracy. Underfitting occurs if k is too large. In this case, the accuracy of the model with 5 neighbors is greater than 10 neighbors.
+
+The greedy and random nature of tree construction leads to unprincipled variable selection, while lasso and ridge can make feature selection to determine the importance of variables. In this project, this kind of regularization method shows poor performance, because it is automated and has feature limitations. It may ignore important features, rendering the model useless. Ridge is the most disappointing in overall performance and accuracy, it keeps all predictors in the model.
+
+Overall, we gained a deeper understanding of the machine learning techniques’ characteristics and performance from the project and selected the random forest model with 250 trees to be the best-performing model based on its accuracy and running time. 
+
+
+## Model Development Responsibilities
+
+For the 10 models, please list the names of the developers along with percentages for how the responsibilities were divided.
+
+1. Multinomial logistic regression - Kaidi Meng - 100%
+2. K-Nearest Neighbors, k = 5 - Xinyi Shao - 100%
+3. K-Nearest Neighbors, k = 10 - Xinyi Shao - 100%
+4. Classification Tree - Xinyi Shao - 100%
+5. Random Forest, k = 500 - Kaidi Meng - 100%
+6. Random Forest, k = 1000 - Kaidi Meng - 100%
+7. Random Forest, ntree = 250 - Kaidi Meng - 100%
+8. Lasso - Ning Yang - 100%
+9. Ridge - Ning Yang - 100%
+10. Support Vector Machines - Ning Yang - 100%
+
+
+
+
+
